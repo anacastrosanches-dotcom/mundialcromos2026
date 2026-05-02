@@ -88,7 +88,7 @@ function getRarity(secId, num) {
 }
 
 // ⚠️ Define aqui a tua password secreta de admin — não partilhes com ninguém!
-const ADMIN_PASSWORD = "Amaezing.2026!";
+const ADMIN_PASSWORD = "muda-esta-password-secreta-2026";
 
 // ── ESTILOS PARTILHADOS ──────────────────────────────
 const s = {
@@ -102,120 +102,138 @@ const s = {
 };
 
 // ════════════════════════════════════════════════════
-// APP ROOT  — ligado ao Supabase
+// APP ROOT  — com Supabase Auth
 // ════════════════════════════════════════════════════
 export default function App() {
-  const [screen, setScreen]       = useState("landing");
-  const [me, setMe]               = useState(null);
-  const [members, setMembers]     = useState([]);
-  const [market, setMarket]       = useState([]);
-  const [events, setEvents]       = useState([]);
-  const [gridMode, setGridMode]   = useState("have");
+  const [screen, setScreen]           = useState("auth"); // auth | mode | grid | search | group | match | market | events
+  const [authUser, setAuthUser]       = useState(null);   // Supabase auth user
+  const [me, setMe]                   = useState(null);   // member profile
+  const [members, setMembers]         = useState([]);
+  const [market, setMarket]           = useState([]);
+  const [events, setEvents]           = useState([]);
+  const [gridMode, setGridMode]       = useState("have");
   const [matchTarget, setMatchTarget] = useState(null);
-  const [toast, setToast]         = useState("");
-  const [loading, setLoading]     = useState(false);
+  const [toast, setToast]             = useState("");
+  const [loading, setLoading]         = useState(true);
+  const [isAdmin, setIsAdmin]         = useState(false);
+  const pendingCount = events.filter(e=>e.status==="pendente").length;
 
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(""),2400); };
   const go = (sc) => { setScreen(sc); window.scrollTo(0,0); };
   const openGrid = (mode) => { setGridMode(mode); go("grid"); };
   const openMatch = (name) => { setMatchTarget(name); go("match"); };
-  const [isAdmin, setIsAdmin] = useState(false);
-  const pendingCount = events.filter(e=>e.status==="pendente").length;
 
-  // ── Fetch all data on mount ──────────────────────────────────────
+  // ── Fetch all shared data ────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     const [{ data: mems }, { data: mkt }, { data: evs }] = await Promise.all([
       sb.from("members").select("*").order("created_at"),
       sb.from("market").select("*").order("created_at",{ascending:false}),
       sb.from("events").select("*").order("created_at"),
     ]);
-    if (mems) setMembers(mems.map(m=>({...m, have:m.have||{}, need:m.need||{}, rsvps:m.rsvps||[]})));
+    if (mems) setMembers(mems.map(m=>({...m,have:m.have||{},need:m.need||{}})));
     if (mkt)  setMarket(mkt);
-    if (evs)  setEvents(evs.map(e=>({...e, rsvps:e.rsvps||[]})));
+    if (evs)  setEvents(evs.map(e=>({...e,rsvps:e.rsvps||[]})));
   }, []);
 
-  // ── Real-time subscriptions ──────────────────────────────────────
+  // ── Check Supabase session on mount ─────────────────────────────
   useEffect(() => {
+    sb.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        setAuthUser(session.user);
+        await loadMemberProfile(session.user);
+      }
+      setLoading(false);
+    });
+    const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
+      if (session) { setAuthUser(session.user); await loadMemberProfile(session.user); }
+      else { setAuthUser(null); setMe(null); setIsAdmin(false); go("auth"); }
+    });
     fetchAll();
     const ch = sb.channel("realtime-all")
       .on("postgres_changes",{event:"*",schema:"public",table:"members"},fetchAll)
       .on("postgres_changes",{event:"*",schema:"public",table:"market"}, fetchAll)
       .on("postgres_changes",{event:"*",schema:"public",table:"events"}, fetchAll)
       .subscribe();
-    return () => sb.removeChannel(ch);
+    return () => { subscription.unsubscribe(); sb.removeChannel(ch); };
   }, [fetchAll]);
 
-  // ── Restore session from localStorage ───────────────────────────
-  useEffect(() => {
-    const saved = localStorage.getItem("wc26_me");
-    const savedAdmin = localStorage.getItem("wc26_admin");
-    if (saved) { try { setMe(JSON.parse(saved)); if(savedAdmin==="1") setIsAdmin(true); go("mode"); } catch {} }
-  }, []);
-
-  // ── DB helpers ──────────────────────────────────────────────────
-  const registerUser = async (user) => {
-    setLoading(true);
-    const { data: existing } = await sb.from("members").select("id").eq("name",user.name).single();
-    if (existing) {
-      // returning user — just restore session
-      const { data } = await sb.from("members").select("*").eq("name",user.name).single();
-      if (data) { const u={...data,have:data.have||{},need:data.need||{}}; setMe(u); localStorage.setItem("wc26_me",JSON.stringify(u)); }
+  // ── Load member profile from DB ──────────────────────────────────
+  const loadMemberProfile = async (user) => {
+    const { data } = await sb.from("members").select("*").eq("auth_id", user.id).single();
+    if (data) {
+      setMe({...data, have:data.have||{}, need:data.need||{}});
+      const savedAdmin = localStorage.getItem("wc26_admin");
+      if (savedAdmin==="1") setIsAdmin(true);
+      go("mode");
     } else {
-      const { data } = await sb.from("members").insert(user).select().single();
-      if (data) { setMe(data); localStorage.setItem("wc26_me",JSON.stringify(data)); }
+      // New user — needs to complete profile
+      go("profile");
     }
     await fetchAll();
-    setLoading(false);
-    go("mode");
   };
 
+  // ── Auth helpers ─────────────────────────────────────────────────
+  const signUp = async (email, password) => {
+    setLoading(true);
+    const { error } = await sb.auth.signUp({ email, password });
+    setLoading(false);
+    if (error) return error.message;
+    return null;
+  };
+
+  const signIn = async (email, password) => {
+    setLoading(true);
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (error) return error.message;
+    return null;
+  };
+
+  const signOut = async () => {
+    setIsAdmin(false);
+    localStorage.removeItem("wc26_admin");
+    await sb.auth.signOut();
+  };
+
+  // ── Save profile after first sign-up ────────────────────────────
+  const saveProfile = async (profile) => {
+    setLoading(true);
+    const { data } = await sb.from("members")
+      .insert({...profile, auth_id: authUser.id, have:{}, need:{}})
+      .select().single();
+    if (data) { setMe({...data,have:{},need:{}}); await fetchAll(); go("mode"); }
+    setLoading(false);
+  };
+
+  // ── Stickers ─────────────────────────────────────────────────────
   const saveStickers = async (updated) => {
     setLoading(true);
-    await sb.from("members").update({have:updated.have, need:updated.need}).eq("name",updated.name);
+    await sb.from("members").update({have:updated.have,need:updated.need}).eq("auth_id",authUser.id);
     setMe(updated);
-    localStorage.setItem("wc26_me",JSON.stringify(updated));
     await fetchAll();
     setLoading(false);
-    go("mode");
     showToast("Guardado ✓");
+    go("mode");
   };
 
-  const addMarket = async (listing) => {
-    await sb.from("market").insert(listing);
-    await fetchAll();
-  };
+  // ── Market ───────────────────────────────────────────────────────
+  const addMarket    = async (l) => { await sb.from("market").insert(l); await fetchAll(); };
+  const deleteMarket = async (id) => { await sb.from("market").delete().eq("id",id); await fetchAll(); };
 
-  const deleteMarket = async (id) => {
-    await sb.from("market").delete().eq("id",id);
-    await fetchAll();
-  };
-
+  // ── Events ───────────────────────────────────────────────────────
   const addEvent = async (ev) => {
-    await sb.from("events").insert({...ev, status:"pendente", rsvps:[]});
+    await sb.from("events").insert({...ev,status:"pendente",rsvps:[]});
     await fetchAll();
     showToast("Proposta enviada! Aguarda aprovação ✓");
     go("mode");
   };
-
-  const approveEvent = async (id) => {
-    await sb.from("events").update({status:"aprovado"}).eq("id",id);
-    await fetchAll();
-    showToast("Encontro aprovado! ✓");
-  };
-
-  const rejectEvent = async (id) => {
-    await sb.from("events").delete().eq("id",id);
-    await fetchAll();
-    showToast("Proposta rejeitada.");
-  };
-
-  const rsvpEvent = async (id) => {
-    const ev = events.find(e=>e.id===id);
-    if(!ev||!me) return;
+  const approveEvent = async (id) => { await sb.from("events").update({status:"aprovado"}).eq("id",id); await fetchAll(); showToast("Encontro aprovado! ✓"); };
+  const rejectEvent  = async (id) => { await sb.from("events").delete().eq("id",id); await fetchAll(); showToast("Proposta rejeitada."); };
+  const rsvpEvent    = async (id) => {
+    const ev = events.find(e=>e.id===id); if(!ev||!me) return;
     const has = ev.rsvps.includes(me.name);
-    const rsvps = has ? ev.rsvps.filter(r=>r!==me.name) : [...ev.rsvps, me.name];
-    await sb.from("events").update({rsvps}).eq("id",id);
-    await fetchAll();
+    const rsvps = has ? ev.rsvps.filter(r=>r!==me.name) : [...ev.rsvps,me.name];
+    await sb.from("events").update({rsvps}).eq("id",id); await fetchAll();
   };
 
   if (loading) return (
@@ -228,59 +246,122 @@ export default function App() {
 
   return (
     <div style={s.page}>
-      {screen==="landing" && <Landing onRegister={registerUser} showToast={showToast}/>}
-      {screen==="mode"    && <Mode me={me} pendingCount={pendingCount} isAdmin={isAdmin} onAdminLogin={(pw)=>{ if(pw===ADMIN_PASSWORD){ setIsAdmin(true); localStorage.setItem("wc26_admin","1"); return true; } return false; }}
+      {screen==="auth"    && <Auth onSignIn={signIn} onSignUp={signUp} showToast={showToast}/>}
+      {screen==="profile" && <Profile onSave={saveProfile} showToast={showToast}/>}
+      {screen==="mode"    && <Mode me={me} pendingCount={pendingCount} isAdmin={isAdmin}
+        onAdminLogin={(pw)=>{ if(pw===ADMIN_PASSWORD){ setIsAdmin(true); localStorage.setItem("wc26_admin","1"); return true; } return false; }}
         onGo={(sc)=>{ if(sc==="grid-have") openGrid("have"); else if(sc==="grid-need") openGrid("need"); else go(sc); }}
-        onLogout={()=>{ setMe(null); setIsAdmin(false); localStorage.removeItem("wc26_me"); localStorage.removeItem("wc26_admin"); go("landing"); }}/>}
+        onLogout={signOut}/>}
       {screen==="grid"    && <Grid me={me} mode={gridMode} onBack={()=>go("mode")} onSave={saveStickers} showToast={showToast}/>}
       {screen==="search"  && <Search members={members} me={me} onBack={()=>go("mode")}/>}
       {screen==="group"   && <Group me={me} members={members} onBack={()=>go("mode")} onOpenMatch={openMatch}/>}
       {screen==="match"   && <MatchDetail me={me} members={members} target={matchTarget} onBack={()=>go("group")}/>}
-      {screen==="market"  && <Market me={me} market={market} members={members} onBack={()=>go("mode")}
-        onAdd={addMarket} onDelete={deleteMarket} showToast={showToast}/>}
-      {screen==="events"  && <Events me={me} events={events} isAdmin={isAdmin} onBack={()=>go("mode")}
-        onAdd={addEvent} onApprove={approveEvent} onReject={rejectEvent} onRsvp={rsvpEvent} showToast={showToast}/>}
+      {screen==="market"  && <Market me={me} market={market} members={members} onBack={()=>go("mode")} onAdd={addMarket} onDelete={deleteMarket} showToast={showToast}/>}
+      {screen==="events"  && <Events me={me} events={events} isAdmin={isAdmin} onBack={()=>go("mode")} onAdd={addEvent} onApprove={approveEvent} onReject={rejectEvent} onRsvp={rsvpEvent} showToast={showToast}/>}
       {toast && <Toast msg={toast}/>}
     </div>
   );
 }
 // ════════════════════════════════════════════════════
-// LANDING
+// AUTH — Login / Registo
 // ════════════════════════════════════════════════════
-function Landing({onRegister, showToast}) {
-  const [name,setName]=useState("");
-  const [local,setLocal]=useState("");
-  const [mail,setMail]=useState("sim");
-  const [rgpd,setRgpd]=useState(false);
+function Auth({onSignIn, onSignUp, showToast}) {
+  const [tab, setTab]         = useState("login"); // login | register
+  const [email, setEmail]     = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if(!email.trim()||!email.includes("@")){showToast("Email inválido!");return}
+    if(password.length<6){showToast("Password mínimo 6 caracteres!");return}
+    setLoading(true);
+    const err = tab==="login" ? await onSignIn(email,password) : await onSignUp(email,password);
+    setLoading(false);
+    if(err){
+      if(err.includes("Invalid login")) showToast("Email ou password incorrectos.");
+      else if(err.includes("already registered")) showToast("Este email já está registado. Faz login!");
+      else showToast(err);
+    } else if(tab==="register") {
+      showToast("Conta criada! Completa o teu perfil.");
+    }
+  };
+
+  const Tab = ({id,label}) => (
+    <button onClick={()=>setTab(id)} style={{
+      flex:1,padding:".65rem",border:"none",cursor:"pointer",fontFamily:"inherit",
+      fontWeight:700,fontSize:".9rem",
+      background:tab===id?C.surf3:C.surf2,
+      color:tab===id?C.text:C.muted,
+      borderBottom:tab===id?`2px solid ${C.green}`:"2px solid transparent",
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem 1.5rem",gap:"1.5rem",background:C.bg}}>
+      <div style={{width:90,height:115,borderRadius:12,background:"linear-gradient(160deg,#0a3d1f,#1565c0)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:4,boxShadow:"0 8px 40px #00000099"}}>
+        <span style={{fontSize:"2.2rem"}}>⚽</span>
+        <span style={{fontWeight:900,fontSize:".8rem",color:C.gold,letterSpacing:3}}>2026</span>
+      </div>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontWeight:900,fontSize:"2.5rem",lineHeight:.95}}>Trocas<br/><span style={{color:C.gold}}>Mundial</span><br/>2026</div>
+        <p style={{color:C.muted,fontSize:".85rem",marginTop:".75rem"}}>Regista cromos, encontra matches e troca!</p>
+      </div>
+      <div style={{width:"100%",maxWidth:340,background:C.surf,borderRadius:16,overflow:"hidden",border:`1px solid ${C.border2}`}}>
+        <div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}>
+          <Tab id="login"    label="Entrar"/>
+          <Tab id="register" label="Criar conta"/>
+        </div>
+        <div style={{padding:"1.25rem",display:"flex",flexDirection:"column",gap:".85rem"}}>
+          <div>
+            <label style={s.label}>Email</label>
+            <input style={s.input} type="email" placeholder="o-teu@email.com"
+              value={email} onChange={e=>setEmail(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&submit()}/>
+          </div>
+          <div>
+            <label style={s.label}>Password</label>
+            <input style={s.input} type="password" placeholder="mínimo 6 caracteres"
+              value={password} onChange={e=>setPassword(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&submit()}/>
+          </div>
+          <button style={s.btn(loading?"#555":C.green)} onClick={submit} disabled={loading}>
+            {loading?"A processar…":tab==="login"?"Entrar →":"Criar conta →"}
+          </button>
+          {tab==="login"&&<p style={{fontSize:".72rem",color:C.muted,textAlign:"center",lineHeight:1.5}}>
+            Ainda não tens conta? Clica em "Criar conta" acima.
+          </p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════
+// PROFILE — Completar perfil após registo
+// ════════════════════════════════════════════════════
+function Profile({onSave, showToast}) {
+  const [name,  setName]  = useState("");
+  const [local, setLocal] = useState("");
+  const [mail,  setMail]  = useState("sim");
+  const [rgpd,  setRgpd]  = useState(false);
   const [loading,setLoading]=useState(false);
 
   const submit = async () => {
-    if(!name.trim()){showToast("Escreve o teu nome!");return}
+    if(!name.trim()) {showToast("Escreve o teu nome!");return}
     if(!local.trim()){showToast("Indica a tua localidade!");return}
-    if(!rgpd){showToast("Aceita os termos RGPD para continuar.");return}
+    if(!rgpd)        {showToast("Aceita os termos RGPD para continuar.");return}
     setLoading(true);
-    await onRegister({name:name.trim(),local:local.trim(),mail,have:{},need:{}});
+    await onSave({name:name.trim(), local:local.trim(), mail});
     setLoading(false);
   };
 
   return (
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem 1.5rem",gap:"1.5rem",textAlign:"center",background:C.bg}}>
-      {/* Album cover */}
-      <div style={{width:100,height:130,borderRadius:12,overflow:"hidden",boxShadow:"0 8px 40px #00000099",flexShrink:0,background:`linear-gradient(160deg,#0a3d1f,#1565c0)`,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:4}}>
-        <span style={{fontSize:"2.5rem"}}>⚽</span>
-        <span style={{fontWeight:900,fontSize:".85rem",color:C.gold,letterSpacing:3}}>2026</span>
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem 1.5rem",gap:"1.25rem",background:C.bg}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontWeight:900,fontSize:"1.6rem"}}>Completa o teu perfil</div>
+        <p style={{color:C.muted,fontSize:".85rem",marginTop:".3rem"}}>Só precisamos de mais alguns dados</p>
       </div>
-
-      <div>
-        <div style={{fontWeight:900,fontSize:"2.8rem",lineHeight:.95,letterSpacing:1}}>
-          Trocas<br/><span style={{color:C.gold}}>Mundial</span><br/>2026
-        </div>
-      </div>
-      <p style={{color:C.muted,fontSize:".9rem",maxWidth:300,lineHeight:1.6}}>
-        Regista cromos, encontra matches no grupo e negocia raros.
-      </p>
-
-      <div style={{display:"flex",flexDirection:"column",gap:".85rem",width:"100%",maxWidth:320}}>
+      <div style={{width:"100%",maxWidth:340,display:"flex",flexDirection:"column",gap:".85rem"}}>
         <div>
           <label style={s.label}>O teu nome</label>
           <input style={s.input} placeholder="ex: João Silva" value={name} onChange={e=>setName(e.target.value)} maxLength={30}/>
@@ -296,17 +377,16 @@ function Landing({onRegister, showToast}) {
             <option value="nao">❌ Só presencial</option>
           </select>
         </div>
-
-        {/* RGPD */}
-        <label style={{display:"flex",alignItems:"flex-start",gap:".65rem",cursor:"pointer",padding:".8rem",background:C.surf2,borderRadius:10,border:`1px solid ${C.border2}`,textAlign:"left"}}>
+        <label style={{display:"flex",alignItems:"flex-start",gap:".65rem",cursor:"pointer",padding:".8rem",background:C.surf2,borderRadius:10,border:`1px solid ${C.border2}`}}>
           <input type="checkbox" checked={rgpd} onChange={e=>setRgpd(e.target.checked)} style={{width:16,height:16,marginTop:2,flexShrink:0,accentColor:C.green}}/>
           <span style={{fontSize:".72rem",color:C.muted,lineHeight:1.55}}>
             Concordo que o meu nome e localidade sejam partilhados com os membros deste grupo para fins de organização de trocas. Os dados podem ser removidos a qualquer momento.{" "}
             <strong style={{color:C.text}}>RGPD · art. 6.º(1)(a)</strong>
           </span>
         </label>
-
-        <button style={s.btn(loading?"#555":C.green)} onClick={submit} disabled={loading}>{loading?"A entrar…":"Começar →"}</button>
+        <button style={s.btn(loading?"#555":C.green)} onClick={submit} disabled={loading}>
+          {loading?"A guardar…":"Entrar na app →"}
+        </button>
       </div>
     </div>
   );
