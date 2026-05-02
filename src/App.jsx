@@ -328,18 +328,25 @@ function Auth({onSignIn, onSignUp, showToast}) {
 // PROFILE — Completar perfil após registo
 // ════════════════════════════════════════════════════
 function Profile({onSave, showToast}) {
-  const [name,  setName]  = useState("");
-  const [local, setLocal] = useState("");
-  const [mail,  setMail]  = useState("sim");
-  const [rgpd,  setRgpd]  = useState(false);
-  const [loading,setLoading]=useState(false);
+  const [name,       setName]       = useState("");
+  const [local,      setLocal]      = useState("");
+  const [mail,       setMail]       = useState("sim");
+  const [phone,      setPhone]      = useState("");
+  const [sharePhone, setSharePhone] = useState(false);
+  const [rgpd,       setRgpd]       = useState(false);
+  const [loading,    setLoading]    = useState(false);
 
   const submit = async () => {
     if(!name.trim()) {showToast("Escreve o teu nome!");return}
     if(!local.trim()){showToast("Indica a tua localidade!");return}
     if(!rgpd)        {showToast("Aceita os termos RGPD para continuar.");return}
+    if(sharePhone && !phone.trim()){showToast("Indica o teu número para o partilhar.");return}
     setLoading(true);
-    await onSave({name:name.trim(), local:local.trim(), mail});
+    await onSave({
+      name:name.trim(), local:local.trim(), mail,
+      phone: sharePhone ? phone.trim() : null,
+      share_phone: sharePhone,
+    });
     setLoading(false);
   };
 
@@ -365,6 +372,30 @@ function Profile({onSave, showToast}) {
             <option value="nao">❌ Só presencial</option>
           </select>
         </div>
+
+        {/* WhatsApp opcional */}
+        <div style={{background:C.surf2,borderRadius:10,border:`1px solid ${C.border2}`,overflow:"hidden"}}>
+          <label style={{display:"flex",alignItems:"flex-start",gap:".65rem",cursor:"pointer",padding:".8rem"}}>
+            <input type="checkbox" checked={sharePhone} onChange={e=>setSharePhone(e.target.checked)}
+              style={{width:16,height:16,marginTop:2,flexShrink:0,accentColor:"#25D366"}}/>
+            <div>
+              <div style={{fontSize:".82rem",fontWeight:700,color:C.text,marginBottom:".2rem"}}>
+                📱 Partilhar número WhatsApp
+              </div>
+              <div style={{fontSize:".72rem",color:C.muted,lineHeight:1.5}}>
+                Permite que membros com quem tens matches te contactem directamente. O número só é visível para quem também o partilhou. <strong style={{color:C.text}}>RGPD · art. 6.º(1)(a)</strong>
+              </div>
+            </div>
+          </label>
+          {sharePhone && (
+            <div style={{padding:"0 .8rem .8rem"}}>
+              <input style={{...s.input,fontSize:".9rem"}} type="tel"
+                placeholder="ex: +351 912 345 678"
+                value={phone} onChange={e=>setPhone(e.target.value)} maxLength={20}/>
+            </div>
+          )}
+        </div>
+
         <label style={{display:"flex",alignItems:"flex-start",gap:".65rem",cursor:"pointer",padding:".8rem",background:C.surf2,borderRadius:10,border:`1px solid ${C.border2}`}}>
           <input type="checkbox" checked={rgpd} onChange={e=>setRgpd(e.target.checked)} style={{width:16,height:16,marginTop:2,flexShrink:0,accentColor:C.green}}/>
           <span style={{fontSize:".72rem",color:C.muted,lineHeight:1.55}}>
@@ -799,6 +830,7 @@ function Group({me, members, onBack, onOpenMatch}) {
                 ))}
                 {m.local&&<span style={{fontSize:".72rem",color:C.muted,background:C.surf2,borderRadius:20,padding:".18rem .55rem"}}>📍 <strong style={{color:C.text}}>{m.local}</strong></span>}
                 <span style={{fontSize:".72rem",color:C.muted,background:C.surf2,borderRadius:20,padding:".18rem .55rem"}}>{m.mail==="sim"?"📬 Envio":"🤝 Presencial"}</span>
+              {m.share_phone&&<span style={{fontSize:".72rem",color:"#25D366",background:"#25D36615",borderRadius:20,padding:".18rem .55rem",border:"1px solid #25D36630"}}>📱 WhatsApp</span>}
               </div>
             </div>
           );
@@ -856,11 +888,33 @@ function MatchDetail({me, members, target, onBack}) {
 
         {member&&<div style={{margin:"0 1rem 1.25rem"}}>
           <div style={{fontSize:".72rem",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:C.muted,marginBottom:".6rem",paddingBottom:".35rem",borderBottom:`1px solid ${C.border}`}}>📦 Contacto</div>
-          <p style={{fontSize:".85rem",color:C.muted,lineHeight:1.6}}>
+          <div style={{fontSize:".85rem",color:C.muted,lineHeight:1.6,marginBottom:".75rem"}}>
             {target} {member.mail==="sim"?<strong style={{color:C.text}}>aceita envio CTT 📬</strong>:<><strong style={{color:C.text}}>só presencial 🤝</strong></>}.
             {member.local&&<> Está em <strong style={{color:C.text}}>{member.local}</strong>.</>}
-            {" "}Envia mensagem no WhatsApp para combinar!
-          </p>
+          </div>
+          {/* WhatsApp button — só aparece se ambos partilharam o número */}
+          {member.share_phone && member.phone && me?.share_phone ? (
+            <a href={`https://wa.me/${member.phone.replace(/[^0-9]/g,"")}`} target="_blank" rel="noopener noreferrer"
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:".6rem",
+                background:"#25D366",color:"#fff",borderRadius:10,padding:".8rem",
+                fontWeight:700,fontSize:".95rem",textDecoration:"none",width:"100%",boxSizing:"border-box"}}>
+              <span style={{fontSize:"1.2rem"}}>📱</span> Abrir WhatsApp com {target}
+            </a>
+          ) : member.share_phone && member.phone && !me?.share_phone ? (
+            <div style={{background:C.surf2,borderRadius:10,padding:".85rem",border:`1px solid ${C.border2}`,textAlign:"center"}}>
+              <div style={{fontSize:".8rem",color:C.muted,lineHeight:1.5}}>
+                {target} partilhou o número mas <strong style={{color:C.text}}>tu não partilhaste o teu</strong>.<br/>
+                Actualiza o teu perfil para desbloquear o contacto directo.
+              </div>
+            </div>
+          ) : (
+            <div style={{background:C.surf2,borderRadius:10,padding:".85rem",border:`1px solid ${C.border2}`,textAlign:"center"}}>
+              <div style={{fontSize:".8rem",color:C.muted,lineHeight:1.5}}>
+                {target} ainda não partilhou número de WhatsApp.<br/>
+                Contacta através do grupo no WhatsApp!
+              </div>
+            </div>
+          )}
         </div>}
 
         {[...matches.give,...matches.get].some(x=>x.r!=="normal")&&<div style={{margin:"0 1rem 1.25rem",background:"#ffd60010",border:`1px solid #ffd60030`,borderRadius:12,padding:"1rem"}}>
