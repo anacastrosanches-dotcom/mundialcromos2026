@@ -1213,17 +1213,26 @@ export default function App() {
   const openGrid = (mode) => { setGridMode(mode); go("grid"); };
   const openMatch = (name) => { setMatchTarget(name); go("match"); };
 
-  // ── Fetch all shared data ────────────────────────────────────────
-  const fetchAll = useCallback(async () => {
-    const [{ data: mems }, { data: mkt }, { data: evs }] = await Promise.all([
-      sb.from("members").select("*").order("created_at"),
-      sb.from("market").select("*").order("created_at",{ascending:false}),
-      sb.from("events").select("*").order("created_at"),
-    ]);
-    if (mems) setMembers(mems.map(m=>({...m,have:m.have||{},need:m.need||{}})));
-    if (mkt)  setMarket(mkt);
-    if (evs)  setEvents(evs.map(e=>({...e,rsvps:e.rsvps||[]})));
+  // ── Fetch helpers — cada um busca só o que precisa ─────────────
+  const fetchMembers = useCallback(async () => {
+    const { data } = await sb.from("members").select("id,name,local,mail,have,need,auth_id").order("created_at");
+    if (data) setMembers(data.map(m=>({...m,have:m.have||{},need:m.need||{}})));
   }, []);
+
+  const fetchMarket = useCallback(async () => {
+    const { data } = await sb.from("market").select("*").order("created_at",{ascending:false});
+    if (data) setMarket(data);
+  }, []);
+
+  const fetchEvents = useCallback(async () => {
+    const { data } = await sb.from("events").select("*").order("created_at");
+    if (data) setEvents(data.map(e=>({...e,rsvps:e.rsvps||[]})));
+  }, []);
+
+  // Mantido para compatibilidade (carregamento inicial)
+  const fetchAll = useCallback(async () => {
+    await Promise.all([fetchMembers(), fetchMarket(), fetchEvents()]);
+  }, [fetchMembers, fetchMarket, fetchEvents]);
 
   // ── Check Supabase session on mount ─────────────────────────────
   useEffect(() => {
@@ -1239,13 +1248,18 @@ export default function App() {
       else { setAuthUser(null); setMe(null); setIsAdmin(false); go("auth"); }
     });
     fetchAll();
+    // Real-time: cada tabela actualiza só o seu estado
     const ch = sb.channel("realtime-all")
-      .on("postgres_changes",{event:"*",schema:"public",table:"members"},fetchAll)
-      .on("postgres_changes",{event:"*",schema:"public",table:"market"}, fetchAll)
-      .on("postgres_changes",{event:"*",schema:"public",table:"events"}, fetchAll)
+      .on("postgres_changes",{event:"*",schema:"public",table:"members"},({new:row,eventType}) => {
+        if(eventType==="INSERT") setMembers(prev=>[...prev,{...row,have:row.have||{},need:row.need||{}}]);
+        else if(eventType==="UPDATE") setMembers(prev=>prev.map(m=>m.id===row.id?{...row,have:row.have||{},need:row.need||{}}:m));
+        else if(eventType==="DELETE") setMembers(prev=>prev.filter(m=>m.id!==row.id));
+      })
+      .on("postgres_changes",{event:"*",schema:"public",table:"market"},fetchMarket)
+      .on("postgres_changes",{event:"*",schema:"public",table:"events"},fetchEvents)
       .subscribe();
     return () => { subscription.unsubscribe(); sb.removeChannel(ch); };
-  }, [fetchAll]);
+  }, [fetchAll, fetchMembers, fetchMarket, fetchEvents]);
 
   // ── Load member profile from DB ──────────────────────────────────
   const loadMemberProfile = async (user) => {
@@ -1256,10 +1270,9 @@ export default function App() {
       if (savedAdmin==="1") setIsAdmin(true);
       go("mode");
     } else {
-      // New user — needs to complete profile
       go("profile");
     }
-    await fetchAll();
+    // Não faz fetchAll aqui — o real-time trata disso
   };
 
   // ── Auth helpers ─────────────────────────────────────────────────
@@ -1291,7 +1304,7 @@ export default function App() {
     const { data } = await sb.from("members")
       .insert({...profile, auth_id: authUser.id, have:{}, need:{}})
       .select().single();
-    if (data) { setMe({...data,have:{},need:{}}); await fetchAll(); go("mode"); }
+    if (data) { setMe({...data,have:{},need:{}}); go("mode"); }
     setLoading(false);
   };
 
@@ -1299,31 +1312,32 @@ export default function App() {
   const saveStickers = async (updated) => {
     setLoading(true);
     await sb.from("members").update({have:updated.have,need:updated.need}).eq("auth_id",authUser.id);
-    setMe(updated);
-    await fetchAll();
+    setMe(updated); // actualiza só o utilizador local imediatamente
     setLoading(false);
     showToast("Guardado ✓");
     go("mode");
+    // real-time actualiza os outros utilizadores automaticamente
   };
 
   // ── Market ───────────────────────────────────────────────────────
-  const addMarket    = async (l) => { await sb.from("market").insert(l); await fetchAll(); };
-  const deleteMarket = async (id) => { await sb.from("market").delete().eq("id",id); await fetchAll(); };
+  const addMarket    = async (l) => { await sb.from("market").insert(l); };
+  const deleteMarket = async (id) => { await sb.from("market").delete().eq("id",id); };
 
   // ── Events ───────────────────────────────────────────────────────
   const addEvent = async (ev) => {
     await sb.from("events").insert({...ev,status:"pendente",rsvps:[]});
-    await fetchAll();
     showToast("Proposta enviada! Aguarda aprovação ✓");
     go("mode");
   };
-  const approveEvent = async (id) => { await sb.from("events").update({status:"aprovado"}).eq("id",id); await fetchAll(); showToast("Encontro aprovado! ✓"); };
-  const rejectEvent  = async (id) => { await sb.from("events").delete().eq("id",id); await fetchAll(); showToast("Proposta rejeitada."); };
+  const approveEvent = async (id) => { await sb.from("events").update({status:"aprovado"}).eq("id",id); showToast("Encontro aprovado! ✓"); };
+  const rejectEvent  = async (id) => { await sb.from("events").delete().eq("id",id); showToast("Proposta rejeitada."); };
   const rsvpEvent    = async (id) => {
     const ev = events.find(e=>e.id===id); if(!ev||!me) return;
     const has = ev.rsvps.includes(me.name);
     const rsvps = has ? ev.rsvps.filter(r=>r!==me.name) : [...ev.rsvps,me.name];
-    await sb.from("events").update({rsvps}).eq("id",id); await fetchAll();
+    // Actualiza localmente para resposta imediata
+    setEvents(prev=>prev.map(e=>e.id===id?{...e,rsvps}:e));
+    await sb.from("events").update({rsvps}).eq("id",id);
   };
 
   if (loading) return (
