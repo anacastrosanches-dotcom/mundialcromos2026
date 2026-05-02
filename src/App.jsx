@@ -1195,12 +1195,13 @@ const s = {
 // APP ROOT  — com Supabase Auth
 // ════════════════════════════════════════════════════
 export default function App() {
-  const [screen, setScreen]           = useState("auth"); // auth | mode | grid | search | group | match | market | events
+  const [screen, setScreen]           = useState("auth"); // auth | mode | grid | search | group | match | market | events | chat | safety
   const [authUser, setAuthUser]       = useState(null);   // Supabase auth user
   const [me, setMe]                   = useState(null);   // member profile
   const [members, setMembers]         = useState([]);
   const [market, setMarket]           = useState([]);
   const [events, setEvents]           = useState([]);
+  const [messages, setMessages]       = useState([]);
   const [gridMode, setGridMode]       = useState("have");
   const [matchTarget, setMatchTarget] = useState(null);
   const [toast, setToast]             = useState("");
@@ -1229,10 +1230,15 @@ export default function App() {
     if (data) setEvents(data.map(e=>({...e,rsvps:e.rsvps||[]})));
   }, []);
 
+  const fetchMessages = useCallback(async () => {
+    const { data } = await sb.from("messages").select("*").order("created_at").limit(200);
+    if (data) setMessages(data);
+  }, []);
+
   // Mantido para compatibilidade (carregamento inicial)
   const fetchAll = useCallback(async () => {
-    await Promise.all([fetchMembers(), fetchMarket(), fetchEvents()]);
-  }, [fetchMembers, fetchMarket, fetchEvents]);
+    await Promise.all([fetchMembers(), fetchMarket(), fetchEvents(), fetchMessages()]);
+  }, [fetchMembers, fetchMarket, fetchEvents, fetchMessages]);
 
   // ── Check Supabase session on mount ─────────────────────────────
   useEffect(() => {
@@ -1257,9 +1263,12 @@ export default function App() {
       })
       .on("postgres_changes",{event:"*",schema:"public",table:"market"},fetchMarket)
       .on("postgres_changes",{event:"*",schema:"public",table:"events"},fetchEvents)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},({new:row})=>{
+        setMessages(prev=>[...prev,row]);
+      })
       .subscribe();
     return () => { subscription.unsubscribe(); sb.removeChannel(ch); };
-  }, [fetchAll, fetchMembers, fetchMarket, fetchEvents]);
+  }, [fetchAll, fetchMembers, fetchMarket, fetchEvents, fetchMessages]);
 
   // ── Load member profile from DB ──────────────────────────────────
   const loadMemberProfile = async (user) => {
@@ -1324,6 +1333,12 @@ export default function App() {
   const deleteMarket = async (id) => { await sb.from("market").delete().eq("id",id); };
 
   // ── Events ───────────────────────────────────────────────────────
+  const addMessage = async (text) => {
+    if(!text.trim()||!me) return;
+    await sb.from("messages").insert({text:text.trim(),from_name:me.name,created_at:new Date().toISOString()});
+    // real-time handles the update
+  };
+
   const addEvent = async (ev) => {
     await sb.from("events").insert({...ev,status:"pendente",rsvps:[]});
     showToast("Proposta enviada! Aguarda aprovação ✓");
@@ -1362,6 +1377,8 @@ export default function App() {
       {screen==="match"   && <MatchDetail me={me} members={members} target={matchTarget} onBack={()=>go("group")}/>}
       {screen==="market"  && <Market me={me} market={market} members={members} onBack={()=>go("mode")} onAdd={addMarket} onDelete={deleteMarket} showToast={showToast}/>}
       {screen==="events"  && <Events me={me} events={events} isAdmin={isAdmin} onBack={()=>go("mode")} onAdd={addEvent} onApprove={approveEvent} onReject={rejectEvent} onRsvp={rsvpEvent} showToast={showToast}/>}
+      {screen==="chat"    && <Chat me={me} members={members} messages={messages} onSend={addMessage} onBack={()=>go("mode")} showToast={showToast}/>}
+      {screen==="safety"  && <Safety onBack={()=>go("mode")}/>}
       {toast && <Toast msg={toast}/>}
     </div>
   );
@@ -1511,6 +1528,8 @@ function Mode({me, onGo, pendingCount, isAdmin, onLogout, onAdminLogin}) {
     {icon:"🔄",title:"Matches no grupo",desc:"Vê quem tem o que precisas",sc:"group"},
     {icon:"💎",title:"Mercado de Raros",desc:"Propostas de troca para especiais e lendários",sc:"market"},
     {icon:"📅",title:"Encontros Presenciais",desc:"Propõe ou consulta encontros para trocar em mão",sc:"events",badge:pendingCount>0&&isAdmin?pendingCount:null},
+    {icon:"💬",title:"Chat do Grupo",desc:"Fala directamente com outros membros para combinar trocas",sc:"chat"},
+    {icon:"🛡️",title:"Boas Práticas",desc:"Conselhos de segurança para trocas seguras",sc:"safety"},
   ];
   return (
     <div style={{minHeight:"100vh",background:C.bg,padding:"1.5rem"}}>
@@ -2438,6 +2457,163 @@ function Events({me, events, isAdmin, onBack, onAdd, onApprove, onReject, onRsvp
   );
 }
 
+
+// ════════════════════════════════════════════════════
+// CHAT — Mensagens do grupo
+// ════════════════════════════════════════════════════
+function Chat({me, members, messages, onSend, onBack, showToast}) {
+  const [text, setText] = useState("");
+  const bottomRef = React.useRef(null);
+
+  // Scroll to bottom when new messages arrive
+  React.useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+
+  const send = async () => {
+    const t = text.trim();
+    if(!t) return;
+    if(t.length > 500){ showToast("Mensagem demasiado longa (máx 500 caracteres)"); return; }
+    setText("");
+    await onSend(t);
+  };
+
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    const today = new Date();
+    const isToday = d.toDateString()===today.toDateString();
+    return isToday
+      ? d.toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit"})
+      : d.toLocaleDateString("pt-PT",{day:"2-digit",month:"2-digit"}) + " " + d.toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit"});
+  };
+
+  // Safety disclaimer — shown at top
+  const [disclaimerOpen, setDisclaimerOpen] = useState(false);
+
+  return (
+    <div style={{background:C.bg,height:"100vh",display:"flex",flexDirection:"column"}}>
+      {/* Topbar */}
+      <div style={s.topbar}>
+        <button onClick={onBack} style={s.btnSm(C.surf2)}>← Voltar</button>
+        <div style={{fontWeight:700,flex:1}}>💬 Chat do Grupo</div>
+        <button onClick={()=>setDisclaimerOpen(v=>!v)} style={{...s.btnSm(C.surf2),color:C.gold,borderColor:"#ffd60030"}}>🛡️ Segurança</button>
+      </div>
+
+      {/* Safety banner */}
+      {disclaimerOpen && (
+        <div style={{background:"#ffd60012",border:`1px solid #ffd60030`,borderRadius:0,padding:".85rem 1rem",borderTop:"none"}}>
+          <div style={{fontWeight:700,fontSize:".8rem",color:C.gold,marginBottom:".5rem"}}>🛡️ Boas práticas de segurança</div>
+          <ul style={{fontSize:".78rem",color:C.muted,lineHeight:1.7,paddingLeft:"1.2rem",margin:0}}>
+            <li>Pede sempre uma <strong style={{color:C.text}}>foto do cromo</strong> antes de combinar a troca</li>
+            <li>Este grupo é só para <strong style={{color:C.text}}>trocas</strong> — evita compras e vendas de dinheiro</li>
+            <li>Não partilhes <strong style={{color:C.text}}>dados pessoais</strong> como morada completa ou dados bancários no chat</li>
+            <li>Para envios CTT, combina os detalhes por <strong style={{color:C.text}}>mensagem privada</strong></li>
+            <li>Em caso de problema, fala com o <strong style={{color:C.text}}>admin do grupo</strong></li>
+          </ul>
+          <button onClick={()=>setDisclaimerOpen(false)} style={{marginTop:".6rem",background:"none",border:"none",color:C.muted,fontSize:".72rem",cursor:"pointer",fontFamily:"inherit",padding:0,textDecoration:"underline"}}>Fechar</button>
+        </div>
+      )}
+
+      {/* Messages */}
+      <div style={{flex:1,overflowY:"auto",padding:"1rem",display:"flex",flexDirection:"column",gap:".6rem"}}>
+        {messages.length===0 && (
+          <div style={{textAlign:"center",padding:"3rem 1rem",color:C.muted}}>
+            <div style={{fontSize:"2rem",marginBottom:".5rem"}}>💬</div>
+            <div style={{fontWeight:700,color:C.text,marginBottom:".3rem"}}>Sem mensagens ainda</div>
+            <div style={{fontSize:".85rem"}}>Sê o primeiro a escrever!</div>
+          </div>
+        )}
+        {messages.map((msg,i)=>{
+          const isMe = me && msg.from_name===me.name;
+          const showName = i===0 || messages[i-1].from_name!==msg.from_name;
+          return (
+            <div key={msg.id||i} style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
+              {showName&&!isMe&&<div style={{fontSize:".7rem",color:C.muted,marginBottom:".2rem",marginLeft:".5rem"}}>{msg.from_name}</div>}
+              <div style={{
+                maxWidth:"80%",padding:".6rem .9rem",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",
+                background:isMe?C.green:C.surf2,
+                color:isMe?"#000":C.text,
+                fontSize:".9rem",lineHeight:1.5,
+                border:isMe?"none":`1px solid ${C.border2}`,
+              }}>
+                {msg.text}
+              </div>
+              <div style={{fontSize:".65rem",color:C.muted,marginTop:".2rem",paddingInline:".5rem"}}>{fmt(msg.created_at)}</div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Input */}
+      <div style={{padding:".75rem 1rem calc(.75rem + env(safe-area-inset-bottom))",borderTop:`1px solid ${C.border}`,background:C.bg,display:"flex",gap:".6rem",alignItems:"flex-end"}}>
+        <textarea
+          style={{...s.input,flex:1,minHeight:42,maxHeight:120,resize:"none",padding:".6rem .9rem",fontSize:".9rem",borderRadius:22,lineHeight:1.4}}
+          placeholder="Escreve uma mensagem…"
+          value={text}
+          onChange={e=>setText(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} }}
+          rows={1}
+        />
+        <button onClick={send} disabled={!text.trim()} style={{
+          width:42,height:42,borderRadius:"50%",border:"none",cursor:text.trim()?"pointer":"default",
+          background:text.trim()?C.green:"#333",color:text.trim()?"#000":C.muted,
+          fontSize:"1.1rem",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+          fontFamily:"inherit",transition:"background .15s",
+        }}>→</button>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════
+// SAFETY — Boas Práticas (ecrã completo)
+// ════════════════════════════════════════════════════
+function Safety({onBack}) {
+  const tips = [
+    {icon:"📸",title:"Pede sempre uma foto",body:"Antes de combinar qualquer troca, pede uma foto do cromo. Confirma que está em bom estado e que o número corresponde ao que precisas."},
+    {icon:"🔄",title:"Só trocas, não compras",body:"Este grupo destina-se exclusivamente a trocas. Evita propostas de compra ou venda por dinheiro — além de não ser o espírito do grupo, pode criar conflitos."},
+    {icon:"🔒",title:"Protege os teus dados",body:"Não partilhes morada completa, dados bancários ou número de cartão no chat. Para envios CTT, combina os detalhes por mensagem privada directa."},
+    {icon:"📬",title:"Envios por correio",body:"Se optares por envio CTT, usa sempre carta registada para ter comprovativo. Envia e recebe ao mesmo tempo — combinam ambos o envio no mesmo dia."},
+    {icon:"👀",title:"Verifica antes de confirmar",body:"Quando receberes os cromos, verifica imediatamente se correspondem ao combinado. Em caso de discrepância, fala logo com a pessoa e, se necessário, com o admin."},
+    {icon:"🤝",title:"Boa-fé acima de tudo",body:"A grande maioria das pessoas age de boa-fé. Se houver algum problema, fala directamente com o admin do grupo que tentará mediar a situação."},
+    {icon:"👶",title:"Menores de idade",body:"Se participares em nome de um filho ou familiar menor, garante que as trocas são supervisionadas por um adulto, especialmente em encontros presenciais."},
+    {icon:"📍",title:"Encontros presenciais",body:"Para encontros presenciais, escolhe sempre locais públicos e movimentados. Nunca combines em locais isolados ou em casa de desconhecidos."},
+  ];
+
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",paddingBottom:"2rem"}}>
+      <div style={s.topbar}>
+        <button onClick={onBack} style={s.btnSm(C.surf2)}>← Voltar</button>
+        <div style={{fontWeight:700,flex:1}}>🛡️ Boas Práticas</div>
+      </div>
+
+      <div style={{padding:"1rem",background:"linear-gradient(135deg,#ffd60010,#ff6d0010)",margin:"1rem",borderRadius:14,border:`1px solid #ffd60030`}}>
+        <div style={{fontWeight:700,color:C.gold,marginBottom:".35rem"}}>Trocas seguras para todos 🤝</div>
+        <p style={{fontSize:".82rem",color:C.muted,lineHeight:1.6}}>
+          Este grupo foi criado para facilitar trocas de cromos de forma divertida e organizada. Para que a experiência seja boa para toda a gente, pedimos que sigas estas recomendações.
+        </p>
+      </div>
+
+      <div style={{padding:"0 1rem",display:"flex",flexDirection:"column",gap:".75rem"}}>
+        {tips.map((t,i)=>(
+          <div key={i} style={{...s.card,display:"flex",gap:".85rem"}}>
+            <div style={{fontSize:"1.6rem",flexShrink:0,marginTop:".1rem"}}>{t.icon}</div>
+            <div>
+              <div style={{fontWeight:700,fontSize:".9rem",marginBottom:".3rem"}}>{t.title}</div>
+              <div style={{fontSize:".82rem",color:C.muted,lineHeight:1.6}}>{t.body}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{margin:"1.5rem 1rem 0",padding:"1rem",background:C.surf2,borderRadius:12,border:`1px solid ${C.border2}`,textAlign:"center"}}>
+        <div style={{fontSize:".82rem",color:C.muted,lineHeight:1.6}}>
+          Em caso de problema ou comportamento suspeito,<br/>
+          <strong style={{color:C.text}}>contacta o admin do grupo no WhatsApp.</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ════════════════════════════════════════════════════
 // TOAST
