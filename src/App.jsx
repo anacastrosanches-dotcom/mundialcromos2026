@@ -11,8 +11,8 @@ const C = {
 
 // ── SUPABASE ─────────────────────────────────────────
 // ⚠️  Substitui pelos teus valores do Supabase Dashboard → Settings → API
-const SUPABASE_URL  = "https://XXXXXXXXXXXXXXXX.supabase.co";
-const SUPABASE_ANON = "eyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+const SUPABASE_URL  = "https://kvizmljhfzyysntipatl.supabase.co/rest/v1/";
+const SUPABASE_ANON = "sb_publishable_csyYFUILbAE2qZTh-lbz3Q_9pUOLfYX";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ── DADOS ────────────────────────────────────────────
