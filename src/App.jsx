@@ -88,7 +88,7 @@ function getRarity(secId, num) {
 }
 
 // ⚠️ Define aqui a tua password secreta de admin — não partilhes com ninguém!
-const ADMIN_PASSWORD = "muda-esta-password-secreta-2026";
+const ADMIN_PASSWORD = "Amaezing.2026!";
 
 // ── ESTILOS PARTILHADOS ──────────────────────────────
 const s = {
