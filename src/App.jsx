@@ -87,7 +87,7 @@ function getRarity(secId, num) {
   return "normal";
 }
 
-const ADMINS = new Set(["admin","Admin","Administrador"]);
+const ADMINS = new Set(["Ana Castro Sanches"]);
 
 // ── ESTILOS PARTILHADOS ──────────────────────────────
 const s = {
