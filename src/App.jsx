@@ -11,7 +11,7 @@ const C = {
 
 // ── SUPABASE ─────────────────────────────────────────
 // ⚠️  Substitui pelos teus valores do Supabase Dashboard → Settings → API
-const SUPABASE_URL  = "https://kvizmljhfzyysntipatl.supabase.co/rest/v1/";
+const SUPABASE_URL  = "https://kvizmljhfzyysntipatl.supabase.co  ";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2aXptbGpoZnp5eXNudGlwYXRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2Nzg2NzEsImV4cCI6MjA5MzI1NDY3MX0.z1c10X79rG9pTzMYrxo3pc2f-0AZty82IlteYwRlX60";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
