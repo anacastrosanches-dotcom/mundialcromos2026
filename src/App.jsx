@@ -434,6 +434,8 @@ function Mode({me, onGo, pendingCount, isAdmin, onLogout, onAdminLogin}) {
       <div style={{marginBottom:"1.25rem"}}>
         <div style={{fontWeight:900,fontSize:"1.7rem"}}>Olá, {me?.name.split(" ")[0]}! 👋</div>
         <div style={{color:C.muted,fontSize:".85rem",marginTop:".2rem"}}>📍 {me?.local} · {me?.mail==="sim"?"📬 Aceita envio":"🤝 Só presencial"}</div>
+        {!me?.share_phone && <button onClick={()=>onGo("editprofile")} style={{marginTop:".25rem",background:"none",border:"none",color:"#25D366",fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"inherit",opacity:.8}}>📱 Adicionar WhatsApp para contacto directo →</button>}
+        {me?.share_phone && <div style={{marginTop:".25rem",fontSize:".72rem",color:"#25D366"}}>📱 WhatsApp partilhado</div>}
         {isAdmin
           ? <div style={{marginTop:".35rem",fontSize:".72rem",color:C.gold,fontWeight:700}}>⚙️ Modo Admin activo · <span style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>{setShowAdminLogin(false);}}>OK</span></div>
           : <button onClick={()=>setShowAdminLogin(v=>!v)} style={{marginTop:".35rem",background:"none",border:"none",color:C.muted,fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>Entrar como admin</button>
@@ -1531,6 +1533,95 @@ function Safety({onBack}) {
           Em caso de problema ou comportamento suspeito,<br/>
           <strong style={{color:C.text}}>contacta o admin do grupo no WhatsApp.</strong>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════
+// EDIT PROFILE
+// ════════════════════════════════════════════════════
+function EditProfile({me, onSave, onBack, showToast}) {
+  const [local,      setLocal]      = useState(me?.local||"");
+  const [mail,       setMail]       = useState(me?.mail||"sim");
+  const [phone,      setPhone]      = useState(me?.phone||"");
+  const [sharePhone, setSharePhone] = useState(me?.share_phone||false);
+  const [loading,    setLoading]    = useState(false);
+
+  const submit = async () => {
+    if(!local.trim()){showToast("Indica a tua localidade!");return}
+    if(sharePhone && !phone.trim()){showToast("Indica o número para partilhar.");return}
+    setLoading(true);
+    await onSave({
+      local: local.trim(), mail,
+      phone: sharePhone ? phone.trim() : null,
+      share_phone: sharePhone,
+    });
+    setLoading(false);
+  };
+
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",paddingBottom:"2rem"}}>
+      <div style={s.topbar}>
+        <button onClick={onBack} style={s.btnSm(C.surf2)}>← Voltar</button>
+        <div style={{fontWeight:700,flex:1}}>⚙️ Editar Perfil</div>
+      </div>
+      <div style={{padding:"1rem",display:"flex",flexDirection:"column",gap:".85rem"}}>
+
+        {/* Nome — read only */}
+        <div style={{...s.card,opacity:.55}}>
+          <div style={s.label}>Nome</div>
+          <div style={{fontWeight:700}}>{me?.name}</div>
+          <div style={{fontSize:".7rem",color:C.muted,marginTop:".2rem"}}>O nome não pode ser alterado após o registo</div>
+        </div>
+
+        <div>
+          <label style={s.label}>Localidade</label>
+          <input style={s.input} placeholder="ex: Lisboa, Porto…" value={local} onChange={e=>setLocal(e.target.value)} maxLength={40}/>
+        </div>
+
+        <div>
+          <label style={s.label}>Envio por correio?</label>
+          <select style={s.input} value={mail} onChange={e=>setMail(e.target.value)}>
+            <option value="sim">✅ Sim, aceito envio CTT</option>
+            <option value="nao">❌ Só presencial</option>
+          </select>
+        </div>
+
+        {/* WhatsApp */}
+        <div style={{background:C.surf2,borderRadius:10,border:`1px solid ${C.border2}`,overflow:"hidden"}}>
+          <label style={{display:"flex",alignItems:"flex-start",gap:".65rem",cursor:"pointer",padding:".85rem"}}>
+            <input type="checkbox" checked={sharePhone} onChange={e=>setSharePhone(e.target.checked)}
+              style={{width:16,height:16,marginTop:2,flexShrink:0,accentColor:"#25D366"}}/>
+            <div>
+              <div style={{fontSize:".85rem",fontWeight:700,color:C.text,marginBottom:".2rem"}}>📱 Partilhar número WhatsApp</div>
+              <div style={{fontSize:".72rem",color:C.muted,lineHeight:1.5}}>
+                Permite contacto directo com membros com quem tens matches. Só visível para quem também partilhou.
+              </div>
+            </div>
+          </label>
+          {sharePhone && (
+            <div style={{padding:"0 .85rem .85rem",display:"flex",flexDirection:"column",gap:".3rem"}}>
+              <input style={{...s.input,fontSize:".9rem"}} type="tel"
+                placeholder="+351 912 345 678"
+                value={phone} onChange={e=>setPhone(e.target.value)} maxLength={20}/>
+              <div style={{fontSize:".7rem",color:C.muted}}>Inclui o indicativo (+351 para Portugal)</div>
+            </div>
+          )}
+        </div>
+
+        {sharePhone && (
+          <div style={{background:"#25D36610",border:"1px solid #25D36630",borderRadius:10,padding:".85rem"}}>
+            <div style={{fontSize:".78rem",color:"#25D366",fontWeight:700,marginBottom:".25rem"}}>ℹ️ Como funciona</div>
+            <div style={{fontSize:".75rem",color:C.muted,lineHeight:1.6}}>
+              O número só é visível para membros que <strong style={{color:C.text}}>também partilharam o deles</strong> e com quem tens <strong style={{color:C.text}}>matches reais de cromos</strong>.
+            </div>
+          </div>
+        )}
+
+        <button style={s.btn(loading?"#555":C.green)} onClick={submit} disabled={loading}>
+          {loading?"A guardar…":"Guardar alterações ✓"}
+        </button>
       </div>
     </div>
   );
