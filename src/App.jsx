@@ -11,8 +11,8 @@ const C = {
 
 // ── SUPABASE ─────────────────────────────────────────
 // ⚠️  Substitui pelos teus valores do Supabase Dashboard → Settings → API
-const SUPABASE_URL  = "https://kvizmljhfzyysntipatl.supabase.co/rest/v1/";
-const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2aXptbGpoZnp5eXNudGlwYXRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2Nzg2NzEsImV4cCI6MjA5MzI1NDY3MX0.z1c10X79rG9pTzMYrxo3pc2f-0AZty82IlteYwRlX60";
+const SUPABASE_URL  = "https://XXXXXXXXXXXXXXXX.supabase.co";
+const SUPABASE_ANON = "eyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ── DADOS ────────────────────────────────────────────
@@ -87,7 +87,8 @@ function getRarity(secId, num) {
   return "normal";
 }
 
-const ADMINS = new Set(["Ana Castro Sanches"]);
+// ⚠️ Define aqui a tua password secreta de admin — não partilhes com ninguém!
+const ADMIN_PASSWORD = "muda-esta-password-secreta-2026";
 
 // ── ESTILOS PARTILHADOS ──────────────────────────────
 const s = {
@@ -118,7 +119,7 @@ export default function App() {
   const go = (sc) => { setScreen(sc); window.scrollTo(0,0); };
   const openGrid = (mode) => { setGridMode(mode); go("grid"); };
   const openMatch = (name) => { setMatchTarget(name); go("match"); };
-  const isAdmin = me && ADMINS.has(me.name);
+  const [isAdmin, setIsAdmin] = useState(false);
   const pendingCount = events.filter(e=>e.status==="pendente").length;
 
   // ── Fetch all data on mount ──────────────────────────────────────
@@ -147,7 +148,8 @@ export default function App() {
   // ── Restore session from localStorage ───────────────────────────
   useEffect(() => {
     const saved = localStorage.getItem("wc26_me");
-    if (saved) { try { setMe(JSON.parse(saved)); go("mode"); } catch {} }
+    const savedAdmin = localStorage.getItem("wc26_admin");
+    if (saved) { try { setMe(JSON.parse(saved)); if(savedAdmin==="1") setIsAdmin(true); go("mode"); } catch {} }
   }, []);
 
   // ── DB helpers ──────────────────────────────────────────────────
@@ -227,9 +229,9 @@ export default function App() {
   return (
     <div style={s.page}>
       {screen==="landing" && <Landing onRegister={registerUser} showToast={showToast}/>}
-      {screen==="mode"    && <Mode me={me} pendingCount={pendingCount} isAdmin={isAdmin}
+      {screen==="mode"    && <Mode me={me} pendingCount={pendingCount} isAdmin={isAdmin} onAdminLogin={(pw)=>{ if(pw===ADMIN_PASSWORD){ setIsAdmin(true); localStorage.setItem("wc26_admin","1"); return true; } return false; }}
         onGo={(sc)=>{ if(sc==="grid-have") openGrid("have"); else if(sc==="grid-need") openGrid("need"); else go(sc); }}
-        onLogout={()=>{ setMe(null); localStorage.removeItem("wc26_me"); go("landing"); }}/>}
+        onLogout={()=>{ setMe(null); setIsAdmin(false); localStorage.removeItem("wc26_me"); localStorage.removeItem("wc26_admin"); go("landing"); }}/>}
       {screen==="grid"    && <Grid me={me} mode={gridMode} onBack={()=>go("mode")} onSave={saveStickers} showToast={showToast}/>}
       {screen==="search"  && <Search members={members} me={me} onBack={()=>go("mode")}/>}
       {screen==="group"   && <Group me={me} members={members} onBack={()=>go("mode")} onOpenMatch={openMatch}/>}
@@ -313,7 +315,11 @@ function Landing({onRegister, showToast}) {
 // ════════════════════════════════════════════════════
 // MODE (menu principal)
 // ════════════════════════════════════════════════════
-function Mode({me, onGo, pendingCount, isAdmin, onLogout}) {
+function Mode({me, onGo, pendingCount, isAdmin, onLogout, onAdminLogin}) {
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminPw, setAdminPw] = useState("");
+  const [adminPwErr, setAdminPwErr] = useState(false);
+
   const cards = [
     {icon:"✅",title:"Registar repetidos",desc:"Marca os cromos que tens a mais",sc:"grid-have"},
     {icon:"❌",title:"Registar em falta",desc:"Marca os cromos que precisas",sc:"grid-need"},
@@ -327,8 +333,22 @@ function Mode({me, onGo, pendingCount, isAdmin, onLogout}) {
       <div style={{marginBottom:"1.25rem"}}>
         <div style={{fontWeight:900,fontSize:"1.7rem"}}>Olá, {me?.name.split(" ")[0]}! 👋</div>
         <div style={{color:C.muted,fontSize:".85rem",marginTop:".2rem"}}>📍 {me?.local} · {me?.mail==="sim"?"📬 Aceita envio":"🤝 Só presencial"}</div>
-        {isAdmin && <div style={{marginTop:".35rem",fontSize:".72rem",color:C.gold,fontWeight:700}}>⚙️ Modo Admin activo</div>}
-        <button onClick={onLogout} style={{marginTop:".5rem",background:"none",border:"none",color:C.muted,fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>Sair / trocar de utilizador</button>
+        {isAdmin
+          ? <div style={{marginTop:".35rem",fontSize:".72rem",color:C.gold,fontWeight:700}}>⚙️ Modo Admin activo · <span style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>{setShowAdminLogin(false);}}>OK</span></div>
+          : <button onClick={()=>setShowAdminLogin(v=>!v)} style={{marginTop:".35rem",background:"none",border:"none",color:C.muted,fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>Entrar como admin</button>
+        }
+        {showAdminLogin && !isAdmin && (
+          <div style={{marginTop:".5rem",display:"flex",gap:".5rem",alignItems:"center"}}>
+            <input type="password" placeholder="Password de admin"
+              style={{...s.input,fontSize:".8rem",padding:".45rem .75rem",flex:1}}
+              value={adminPw} onChange={e=>setAdminPw(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"){ if(onAdminLogin(adminPw)){ setShowAdminLogin(false); setAdminPw(""); } else { setAdminPwErr(true); setTimeout(()=>setAdminPwErr(false),1500); } } }}
+            />
+            <button style={s.btn(C.green)} onClick={()=>{ if(onAdminLogin(adminPw)){ setShowAdminLogin(false); setAdminPw(""); } else { setAdminPwErr(true); setTimeout(()=>setAdminPwErr(false),1500); } }}>OK</button>
+          </div>
+        )}
+        {adminPwErr && <div style={{fontSize:".72rem",color:C.red,marginTop:".25rem"}}>Password incorrecta</div>}
+        <button onClick={onLogout} style={{marginTop:".35rem",background:"none",border:"none",color:C.muted,fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>Sair / trocar de utilizador</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:".75rem"}}>
         {cards.map(c=>(
